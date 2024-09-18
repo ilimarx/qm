@@ -46,7 +46,12 @@ man: qm.8.md
 
 .PHONY: dist
 dist:
-	tar cvz --transform s/qm/qm-${VERSION}/ -f /tmp/v${VERSION}.tar.gz ../qm
+	tar cvz \
+		--exclude='.git' \
+		--dereference \
+		--exclude='.gitignore' \
+		--transform s/qm/qm-${VERSION}/ \
+		-f /tmp/v${VERSION}.tar.gz ../qm
 	mv /tmp/v${VERSION}.tar.gz ./rpm
 
 .PHONY: rpm

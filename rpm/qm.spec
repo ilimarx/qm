@@ -4,6 +4,11 @@
 %global selinuxtype targeted
 %global moduletype services
 %global modulenames qm
+
+# rootfs macros
+%global rootfs_qm %{_prefix}/lib/qm/rootfs/
+%global rootfs_qm_window_manager %{_prefix}/lib/qm/rootfs/qm_windowmanager
+
 %global seccomp_json /usr/share/%{modulenames}/seccomp.json
 %global setup_tool %{_prefix}/share/%{modulenames}/setup
 
@@ -21,8 +26,6 @@
 %else
 %bcond_without copr
 %endif
-
-
 
 %if 0%{?fedora}
 %global podman_epoch 5
@@ -58,6 +61,12 @@ BuildRequires: pkgconfig(systemd)
 BuildRequires: selinux-policy >= %_selinux_policy_version
 BuildRequires: selinux-policy-devel >= %_selinux_policy_version
 
+%if %{defined enable_window_manager}
+Requires: %{enable_window_manager}
+Requires: weston
+Requires: dbus-tools
+%endif
+
 Requires: parted
 Requires: containers-common
 Requires: selinux-policy >= %_selinux_policy_version
@@ -91,9 +100,39 @@ sed -i 's/^install: man all/install:/' Makefile
 %{__make} all
 
 %install
-# install policy modules
+# Install policy modules
 %_format MODULES $x.pp.bz2
 %{__make} DESTDIR=%{buildroot} DATADIR=%{_datadir} install
+
+# Create the necessary directory structure in the BUILDROOT
+mkdir -p %{buildroot}/%{rootfs_qm}/etc/pam.d
+mkdir -p %{buildroot}/%{rootfs_qm}/etc/systemd/system
+mkdir -p %{buildroot}/%{rootfs_qm}/%{_prefix}/lib/tmpfiles.d/etc/containers/systemd/
+mkdir -p %{buildroot}/%{rootfs_qm}/%{_prefix}/lib/tmpfiles.d/etc/containers/systemd/qm.container.d
+mkdir -p %{buildroot}/%{rootfs_qm_window_manager}/mutter
+mkdir -p %{buildroot}/%{rootfs_qm_window_manager}/session-activate
+
+
+# Install the pam.d file for wayland
+install -m 644 ./qm-windowmanager/etc/pam.d/wayland %{buildroot}/%{rootfs_qm}/etc/pam.d/wayland
+
+# Install the systemd service files
+install -m 644 ./qm-windowmanager/etc/systemd/system/wayland-session.service %{buildroot}/%{rootfs_qm}/etc/systemd/system/wayland-session.service
+install -m 644 ./qm-windowmanager/etc/systemd/system/qm-dbus.socket %{buildroot}/%{rootfs_qm}/etc/systemd/system/qm-dbus.socket
+install -m 644 ./qm-windowmanager/etc/systemd/system/active-session.service %{buildroot}/%{rootfs_qm}/etc/systemd/system/activate-session.service
+
+install -m 755 ./qm-windowmanager/usr/share/qm/mutter/ContainerFile %{buildroot}/%{rootfs_qm_window_manager}/mutter/ContainerFile
+install -m 755 ./qm-windowmanager/usr/share/qm/manage-pam-selinux-systemd-user-config %{buildroot}/%{rootfs_qm_window_manager}/manage-pam-selinux-systemd-user-config
+install -m 755 ./qm-windowmanager/usr/share/qm/session-activate/ContainerFile %{buildroot}/%{rootfs_qm_window_manager}/session-activate/ContainerFile
+install -m 755 ./qm-windowmanager/usr/share/qm/session-activate/qm_windowmanager_activate_session %{buildroot}/%{rootfs_qm_window_manager}/session-activate/qm_windowmanager_activate_session
+
+# Install the tmpfiles.d configuration for mutter and weston
+install -m 644 ./qm-windowmanager/usr/lib/tmpfiles.d/etc/containers/systemd/gnome_mutter.container %{buildroot}/%{rootfs_qm}%{_prefix}/lib/tmpfiles.d/etc/containers/systemd/gnome_mutter.container
+install -m 644 ./qm-windowmanager/usr/lib/tmpfiles.d/etc/containers/systemd/weston_terminal.container %{buildroot}/%{rootfs_qm}%{_prefix}/lib/tmpfiles.d/etc/containers/systemd/weston_terminal.container
+
+# Install additional tmpfiles.d configurations
+install -m 644 ./qm-windowmanager/usr/lib/tmpfiles.d/wayland-xdg-directory.conf %{buildroot}/%{rootfs_qm}%{_prefix}/lib/tmpfiles.d/wayland-xdg-directory.conf
+install -m 644 ./qm-windowmanager/usr/lib/tmpfiles.d/etc/containers/systemd/qm.container.d/wayland-extra-devices.conf %{buildroot}/%{rootfs_qm}%{_prefix}/lib/tmpfiles.d/etc/containers/systemd/qm.container.d/wayland-extra-devices.conf
 
 %post
 # Install all modules in a single transaction
@@ -141,10 +180,57 @@ fi
 %ghost %dir %{_datadir}/containers/systemd
 %{_datadir}/containers/systemd/qm.container
 %ghost %{_sysconfdir}/containers/systemd/qm.container
+
 %{_mandir}/man8/*
 %ghost %dir %{_installscriptdir}
 %ghost %dir %{_installscriptdir}/rootfs
 %ghost %{_installscriptdir}/rootfs/*
+
+%package windowmanager
+Summary: Optional Window Manager deployed in QM environment (Experimental)
+Requires: qm
+%description windowmanager
+The optional window manager deployed in QM environment as nested container.
+
+%files windowmanager
+%{rootfs_qm}/%{_sysconfdir}/pam.d/wayland
+%{rootfs_qm}/%{_sysconfdir}/systemd/system/wayland-session.service
+%{rootfs_qm}/%{_sysconfdir}/systemd/system/qm-dbus.socket
+%{rootfs_qm}/%{_sysconfdir}/systemd/system/activate-session.service
+%{rootfs_qm}/%{_prefix}/lib/tmpfiles.d/etc/containers/systemd/gnome_mutter.container
+%{rootfs_qm}/%{_prefix}/lib/tmpfiles.d/etc/containers/systemd/weston_terminal.container
+%{rootfs_qm_window_manager}/session-activate/ContainerFile
+%{rootfs_qm_window_manager}/session-activate/qm_windowmanager_activate_session
+%{rootfs_qm_window_manager}/mutter/ContainerFile
+%{rootfs_qm_window_manager}/manage-pam-selinux-systemd-user-config
+%config(noreplace) %{rootfs_qm}/%{_prefix}/lib/tmpfiles.d/wayland-xdg-directory.conf
+%config(noreplace) %{rootfs_qm}/%{_prefix}/lib/tmpfiles.d/etc/containers/systemd/qm.container.d/wayland-extra-devices.conf
+
+%post windowmanager
+%{rootfs_qm_window_manager}/manage-pam-selinux-systemd-user-config %{rootfs_qm_window_manager}/etc/pam.d/systemd-user --comment
+services=("activate-session.service" "qm-dbus.socket" "wayland-session.service")
+
+# Loop to enable and start each service or socket
+for service in "${services[@]}"; do
+    systemctl enable "$service" >/dev/null 2>&1 || :
+    systemctl start "$service" >/dev/null 2>&1 || :
+done
+
+%preun windowmanager
+# getting back the config from the qm-windowmanager config comments
+%{rootfs_qm_window_manager}/manage-pam-selinux-systemd-user-config %{rootfs_qm_window_manager}/etc/pam.d/systemd-user --uncomment
+services=("activate-session.service" "qm-dbus.socket" "wayland-session.service")
+
+# Stop and disable the services before uninstalling
+for service in "${services[@]}"; do
+    systemctl stop "$service" >/dev/null 2>&1 || :
+    systemctl disable "$service" >/dev/null 2>&1 || :
+done
+
+%postun windowmanager
+# Reload systemd daemon after uninstallation
+systemctl daemon-reload &> /dev/null
+
 
 %changelog
 %if %{defined autochangelog}
